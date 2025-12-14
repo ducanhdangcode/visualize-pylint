@@ -70,7 +70,7 @@ def run_pylint_on_file(file_path):
                 issues = json.loads(output_data)
             except json.JSONDecodeError:
                 pass
-
+        
         score = 10.0
         score_match = re.search(r'rated at ([\d.]+)/10', result_text.stdout)
         if score_match:
@@ -97,10 +97,10 @@ def generate_html_report(df, score, plotly_div, target_path, file_summaries):
         score_color = '#f1c40f'
     else:
         score_color = '#e74c3c'
-
+    
     unique_files = sorted(df['path'].unique()) if not df.empty else []
     file_options = ''.join([f'<option value="{html.escape(f)}">{html.escape(f)}</option>' for f in unique_files])
-
+    
     file_summary_html = ""
     if file_summaries:
         file_summary_html = """
@@ -142,7 +142,7 @@ def generate_html_report(df, score, plotly_div, target_path, file_summaries):
             </table>
         </div>
         """
-
+    
     table_rows = ""
     for _, row in df.iterrows():
         severity_color = COLORS.get(row['type'], '#95a5a6')
@@ -305,15 +305,35 @@ def generate_html_report(df, score, plotly_div, target_path, file_summaries):
     return html_content
 
 def run_dashboard(target_path):
+    
     python_files = get_python_files(target_path)
     
     if not python_files:
         return
-
+    
     all_issues = []
     file_summaries = []
-    total_score = 0
-    
+    overall_score = 10.0
+    try:
+        result_json = subprocess.run(
+            ["pylint", target_path, "--output-format=json"],
+            capture_output=True, text=True
+        )
+        result_text = subprocess.run(
+            ["pylint", target_path],
+            capture_output=True, text=True
+        )
+        score_match = re.search(r'rated at ([\d.]+)/10', result_text.stdout)
+        if score_match:
+            overall_score = float(score_match.group(1))
+        output_data = result_json.stdout.strip()
+        if output_data:
+            try:
+                all_issues = json.loads(output_data)
+            except json.JSONDecodeError:
+                pass
+    except:
+        pass
     for file_path in python_files:
         issues, score = run_pylint_on_file(file_path)
         issue_counts = {'fatal': 0, 'error': 0, 'warning': 0, 'refactor': 0, 'convention': 0}
@@ -332,10 +352,7 @@ def run_dashboard(target_path):
             'convention': issue_counts['convention'],
             'total': len(issues)
         })
-        
-        all_issues.extend(issues)
-        total_score += score
-    avg_score = total_score / len(python_files) if python_files else 10.0
+    
     file_summaries.sort(key=lambda x: (x['score'], -x['total']))
     if all_issues:
         df = pd.DataFrame(all_issues)
@@ -344,7 +361,6 @@ def run_dashboard(target_path):
         df = df.drop('priority_score', axis=1)
     else:
         df = pd.DataFrame()
-
     fig = make_subplots(
         rows=1, cols=2,
         column_widths=[0.3, 0.7],
@@ -352,7 +368,7 @@ def run_dashboard(target_path):
     )
 
     fig.add_trace(go.Indicator(
-        mode="gauge+number", value=avg_score,
+        mode="gauge+number", value=overall_score,
         gauge={'axis': {'range': [0, 10]}, 'bar': {'color': "#2c3e50"},
                'steps': [{'range': [0, 5], 'color': "#e74c3c"}, {'range': [5, 8], 'color': "#f1c40f"}, {'range': [8, 10], 'color': "#2ecc71"}]},
     ), row=1, col=1)
@@ -370,7 +386,7 @@ def run_dashboard(target_path):
     
     plotly_html = fig.to_html(full_html=False, include_plotlyjs='cdn')
 
-    full_html = generate_html_report(df, avg_score, plotly_html, target_path, file_summaries)
+    full_html = generate_html_report(df, overall_score, plotly_html, target_path, file_summaries)
 
     with open("pylint_pro_report.html", "w", encoding="utf-8") as f:
         f.write(full_html)
